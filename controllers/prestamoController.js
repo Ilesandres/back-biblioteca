@@ -1,6 +1,7 @@
 const { Prestamo, Libro, Usuario, Notificacion } = require('../models');
 const { Op } = require('sequelize');
 const { actualizarEstadisticas } = require('./estadisticaController');
+const NotificationService = require('../services/notificationService');
 
 // Extender el período de préstamo
 const extenderPrestamo = async (req, res) => {
@@ -30,16 +31,19 @@ const extenderPrestamo = async (req, res) => {
             fechaDevolucion: nuevaFechaDevolucion
         });
 
-        // Crear notificación
-        await Notificacion.create({
-            usuarioId: req.user.id,
-            tipo: 'extension',
-            mensaje: `El período de préstamo ha sido extendido hasta ${nuevaFechaDevolucion.toLocaleDateString()}`,
-            referencia: {
-                tipo: 'prestamo',
-                id: prestamoId
-            }
-        });
+        // Crear notificación en tiempo real
+        try {
+            await NotificationService.createNotification({
+                usuarioId: req.user.id,
+                tipo: 'extension',
+                mensaje: `El período de préstamo ha sido extendido hasta ${nuevaFechaDevolucion.toLocaleDateString()}`,
+                referenciaTipo: 'prestamo',
+                referenciaId: prestamoId
+            });
+        } catch (notificationError) {
+            console.error('Error al crear la notificación:', notificationError);
+            // Continuar con la operación incluso si falla la notificación
+        }
 
         res.status(200).json({
             success: true,

@@ -12,6 +12,7 @@ const prestamoRoutes = require('./routes/prestamoRoutes');
 const resenaRoutes = require('./routes/resenaRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const notificacionRoutes = require('./routes/notificacionRoutes');
 
 const app = express();
 const httpServer = createServer(app);
@@ -31,7 +32,7 @@ app.use('/api/prestamos', prestamoRoutes);
 app.use('/api/resenas', resenaRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatRoutes);
-
+app.use('/api/notificaciones', notificacionRoutes);
 
 // Middleware de manejo de errores
 app.use(errorHandler);

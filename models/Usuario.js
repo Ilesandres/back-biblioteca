@@ -27,6 +27,10 @@ const bcrypt = require('bcryptjs');
  *           type: string
  *           enum: [usuario, admin]
  *           description: Rol del usuario en el sistema
+ *         estado:
+ *           type: string
+ *           enum: [activo, inactivo]
+ *           description: Estado del usuario en el sistema
  */
 const Usuario = sequelize.define('Usuario', {
     nombre: {
@@ -48,19 +52,11 @@ const Usuario = sequelize.define('Usuario', {
     rol: {
         type: DataTypes.ENUM('usuario', 'admin'),
         defaultValue: 'usuario'
-    }
-}, {
-    timestamps: true,
-    hooks: {
-        beforeCreate: async (usuario) => {
-            usuario.password = await bcrypt.hash(usuario.password, 12);
-        },
-        beforeUpdate: async (usuario) => {
-            if (usuario.changed('password')) {
-                usuario.password = await bcrypt.hash(usuario.password, 12);
-            }
-        }
+    },
+    estado: {
+        type: DataTypes.ENUM('activo', 'inactivo'),
+        defaultValue: 'activo'
     }
 });
 
-module.exports = Usuario; 
+module.exports = Usuario;
