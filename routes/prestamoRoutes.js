@@ -4,9 +4,10 @@ const { protegerRuta } = require('../middlewares/auth');
 const { esAdmin } = require('../middlewares/roles');
 const {
     crearPrestamo,
-    registrarDevolucion,
-    obtenerPrestamosUsuario,
-    extenderPrestamo
+    devolverLibro,
+    obtenerPrestamosActivos,
+    extenderPrestamo,
+    obtenerHistorialPrestamos
 } = require('../controllers/prestamoController');
 
 /**
@@ -57,7 +58,7 @@ const {
  *       500:
  *         description: Error del servidor
  */
-router.get('/usuario', protegerRuta, obtenerPrestamosUsuario);
+router.get('/usuario', protegerRuta, obtenerHistorialPrestamos);
 
 /**
  * @swagger
@@ -139,7 +140,7 @@ router.post('/', protegerRuta, crearPrestamo);
 
 /**
  * @swagger
- * /api/prestamos/{id}/devolver:
+ * /prestamos/{id}/devolver:
  *   put:
  *     summary: Registrar devolución de un libro
  *     tags: [Préstamos]
@@ -155,11 +156,11 @@ router.post('/', protegerRuta, crearPrestamo);
  *       200:
  *         description: Libro devuelto exitosamente
  */
-router.put('/:id/devolver', protegerRuta, registrarDevolucion);
+router.put('/:id/devolver', protegerRuta, devolverLibro);
 
 /**
  * @swagger
- * /api/prestamos/{id}/extender:
+ * /prestamos/{id}/extender:
  *   put:
  *     summary: Extender el período de préstamo de un libro
  *     tags: [Préstamos]
@@ -197,6 +198,7 @@ router.put('/:id/devolver', protegerRuta, registrarDevolucion);
  *       404:
  *         description: Préstamo no encontrado
  */
-router.put('/:id/extender', protegerRuta, extenderPrestamo);
+// Extensión de préstamos no implementada aún
+ router.put('/:id/extender', protegerRuta, extenderPrestamo);
 
 module.exports = router;

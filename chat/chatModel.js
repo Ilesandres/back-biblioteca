@@ -1,19 +1,25 @@
-const { DataTypes } = require('sequelize');
-const sequelize = require('../config/database');
+const pool = require('../config/db');
 
-const Chat = sequelize.define('Chat', {
-    tipo: {
-        type: DataTypes.ENUM('soporte', 'general'),
-        defaultValue: 'soporte'
-    },
-    estado: {
-        type: DataTypes.ENUM('activo', 'cerrado'),
-        defaultValue: 'activo'
-    },
-    ultimoMensaje: {
-        type: DataTypes.DATE,
-        defaultValue: DataTypes.NOW
+class Chat {
+    static async findAll() {
+        const [rows] = await pool.query('SELECT * FROM chats ORDER BY created_at DESC');
+        return rows;
     }
-});
 
-module.exports = Chat; 
+    static async findOne(id) {
+        const [rows] = await pool.query('SELECT * FROM chats WHERE id = ?', [id]);
+        return rows[0];
+    }
+
+    static async create(data) {
+        const [result] = await pool.query('INSERT INTO chats SET ?', [data]);
+        return { id: result.insertId, ...data };
+    }
+
+    static async update(id, data) {
+        await pool.query('UPDATE chats SET ? WHERE id = ?', [data, id]);
+        return this.findOne(id);
+    }
+}
+
+module.exports = Chat;

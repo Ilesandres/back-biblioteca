@@ -1,223 +1,182 @@
-const { Prestamo, Libro, Usuario, Notificacion } = require('../models');
-const { Op } = require('sequelize');
-const { actualizarEstadisticas } = require('./estadisticaController');
-const NotificationService = require('../services/notificationService');
+const pool = require('../config/db');
 
-// Extender el período de préstamo
-const extenderPrestamo = async (req, res) => {
-    try {
-        const prestamoId = req.params.id;
-        const prestamo = await Prestamo.findOne({
-            where: {
-                id: prestamoId,
-                usuarioId: req.user.id,
-                devuelto: false
-            }
-        });
-
-        if (!prestamo) {
-            return res.status(404).json({
-                success: false,
-                message: 'Préstamo no encontrado o no autorizado'
-            });
-        }
-
-        // Calcular nueva fecha de devolución (7 días adicionales)
-        const nuevaFechaDevolucion = new Date(prestamo.fechaDevolucion);
-        nuevaFechaDevolucion.setDate(nuevaFechaDevolucion.getDate() + 7);
-
-        // Actualizar el préstamo
-        await prestamo.update({
-            fechaDevolucion: nuevaFechaDevolucion
-        });
-
-        // Crear notificación en tiempo real
-        try {
-            await NotificationService.createNotification({
-                usuarioId: req.user.id,
-                tipo: 'extension',
-                mensaje: `El período de préstamo ha sido extendido hasta ${nuevaFechaDevolucion.toLocaleDateString()}`,
-                referenciaTipo: 'prestamo',
-                referenciaId: prestamoId
-            });
-        } catch (notificationError) {
-            console.error('Error al crear la notificación:', notificationError);
-            // Continuar con la operación incluso si falla la notificación
-        }
-
-        res.status(200).json({
-            success: true,
-            message: 'Período de préstamo extendido exitosamente',
-            data: {
-                id: prestamo.id,
-                nuevaFechaDevolucion
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al extender el período de préstamo',
-            error: error.message
-        });
-    }
-};
-
-// Obtener préstamos del usuario
-const obtenerPrestamosUsuario = async (req, res) => {
-    try {
-        const prestamos = await Prestamo.findAll({
-            where: { usuarioId: req.user.id },
-            include: [{
-                model: Libro,
-                attributes: ['titulo', 'autor', 'portada']
-            }],
-            order: [['createdAt', 'DESC']]
-        });
-
-        res.status(200).json({
-            success: true,
-            data: prestamos
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al obtener los préstamos',
-            error: error.message
-        });
-    }
-};
-
-// ¡Nuevo préstamo! Permite a los usuarios tomar prestado un libro
+// Crear un nuevo préstamo
 const crearPrestamo = async (req, res) => {
     try {
         const { libroId, fechaDevolucion } = req.body;
-        const usuarioId = req.user.id;
+        const libro_id = libroId; 
+        const usuario_id = req.user.id;
 
-        // Validar que los IDs sean números válidos
-        if (!libroId || !usuarioId) {
-            return res.status(400).json({
-                success: false,
-                message: 'Se requieren los IDs del libro y usuario'
-            });
+        const [libro] = await pool.query('SELECT CASE WHEN stock > 0 THEN TRUE ELSE FALSE END as disponible FROM libro WHERE id = ?', [libro_id]);
+        
+        if (libro.length === 0) {
+            return res.status(404).json({ error: 'Libro no encontrado' });
         }
 
-        // Verificar disponibilidad del libro
-        const libro = await Libro.findByPk(libroId);
-        if (!libro) {
-            return res.status(404).json({
-                success: false,
-                message: 'Libro no encontrado'
-            });
+        if (!libro[0].disponible) {
+            return res.status(400).json({ error: 'El libro no está disponible' });
         }
 
+        // Crear el préstamo
+        const [result] = await pool.query(
+            'INSERT INTO prestamo (usuarioId, libroId, fechaPrestamo, fechaDevolucion) VALUES (?, ?, NOW(), ?)',
+            [usuario_id, libro_id, fechaDevolucion]
+        );
 
-        if (!libro.disponible || libro.copias < 1) {
-            return res.status(400).json({
-                success: false,
-                message: '¡Lo sentimos! Este libro no está disponible para préstamo'
-            });
-        }
-
-        // Crear el préstamo con IDs explícitos
-        const prestamo = await Prestamo.create({
-            libroId: libroId,
-            usuarioId: usuarioId,
-            fechaDevolucion: new Date(fechaDevolucion)
-        });
-        console.log( "libro : "+libroId+" usuario id : "+usuarioId+" fecha : "+fechaDevolucion)
-        console.log(prestamo);
-
-        // Actualizar disponibilidad y crear notificación
-        await Promise.all([
-            libro.update({
-                copias: libro.copias - 1,
-                disponible: libro.copias > 1
-            }),
-            Notificacion.create({
-                usuarioId: usuarioId,
-                tipo: 'prestamo',
-                mensaje: `¡Has tomado prestado el libro: ${libro.titulo}!`,
-                referencia: {
-                    tipo: 'prestamo',
-                    id: prestamo.id
-                }
-            }),
-            actualizarEstadisticas(libroId)
-        ]);
-
-        // Obtener préstamo con datos del libro
-        const prestamoConLibro = await Prestamo.findByPk(prestamo.id, {
-            include: [{
-                model: Libro,
-                attributes: ['titulo', 'autor', 'portada']
-            }]
-        });
+        // Actualizar stock del libro
+        await pool.query('UPDATE libro SET stock = stock - 1 WHERE id = ?', [libro_id]);
 
         res.status(201).json({
-            success: true,
-            data: prestamoConLibro,
-            message: '¡Préstamo realizado exitosamente!'
+            id: result.insertId,
+            usuario_id,
+            libro_id,
+            fecha_prestamo: new Date(),
+            fecha_devolucion: fechaDevolucion
         });
-    } catch (error) {
-        res.status(400).json({
-            success: false,
-            message: 'Error al crear el préstamo',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error al crear préstamo:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
-// ¡Registrar devolución de libro!
-const registrarDevolucion = async (req, res) => {
+// Devolver un libro
+const devolverLibro = async (req, res) => {
     try {
-        const prestamo = await Prestamo.findByPk(req.params.id, {
-            include: [{ model: Libro }]
-        });
+        const { id } = req.params;
+        const estado="devuelto";
 
-        if (!prestamo) {
-            return res.status(404).json({
-                success: false,
-                message: 'Préstamo no encontrado'
-            });
+        // Verificar que el préstamo existe y pertenece al usuario
+        const [prestamo] = await pool.query(
+            'SELECT libroId FROM prestamo WHERE id = ? AND usuarioId = ? AND fechaDevolucionReal IS NULL',
+            [id, req.user.id]
+        );
+
+        if (prestamo.length === 0) {
+            return res.status(404).json({ error: 'Préstamo no encontrado o ya devuelto' });
         }
 
-        // Actualizar préstamo y libro
-        await Promise.all([
-            prestamo.update({
-                estado: 'devuelto',
-                devuelto: true
-            }),
-            prestamo.Libro.update({
-                copias: prestamo.Libro.copias + 1,
-                disponible: true
-            }),
-            Notificacion.create({
-                usuarioId: prestamo.usuarioId,
-                tipo: 'devolucion',
-                mensaje: '¡Libro devuelto exitosamente!',
-                referencia: {
-                    tipo: 'prestamo',
-                    id: prestamo.id
-                }
-            })
-        ]);
+        // Actualizar fecha de devolución
+        await pool.query(
+            'UPDATE prestamo SET fechaDevolucionReal = NOW(), estado = ?  WHERE id = ?',
+            [estado, id]
+        );
 
-        res.status(200).json({
-            success: true,
-            message: '¡Libro devuelto exitosamente!'
+        // Actualizar stock del libro
+        await pool.query(
+            'UPDATE libro SET stock = stock + 1 WHERE id = ?',
+            [prestamo[0].libroId]
+        );
+
+        res.json({ message: 'Libro devuelto exitosamente' });
+    } catch (err) {
+        console.error('Error al devolver libro:', err);
+        res.status(400).json({ error: err.message });
+    }
+};
+
+// Obtener todos los préstamos activos
+const obtenerPrestamosActivos = async (req, res) => {
+    try {
+        const [prestamos] = await pool.query(
+            `SELECT p.id, p.fechaPrestamo, p.fechaDevolucion, 
+                    l.titulo as libro_titulo, l.portada as libro_Portada,
+                     u.nombre as usuario_nombre
+             FROM prestamo p
+             JOIN libro l ON p.libroId = l.id
+             JOIN usuario u ON p.usuarioId = u.id
+             WHERE p.fechaDevolucion IS NULL
+             ORDER BY p.fechaPrestamo DESC`
+        );
+
+        res.json(prestamos);
+    } catch (err) {
+        console.error('Error al obtener préstamos activos:', err);
+        res.status(400).json({ error: err.message });
+    }
+};
+
+// Obtener historial de préstamos del usuario autenticado
+const obtenerHistorialPrestamos = async (req, res) => {
+    try {
+        const [prestamos] = await pool.query(
+            `SELECT p.id, p.fechaPrestamo, p.fechaDevolucion, p.estado as estado_prestamo,
+                    l.titulo as libro_titulo, l.portada as libro_Portada,
+                     l.autor as libro_autor, u.nombre as usuario_nombre
+             FROM prestamo p
+             JOIN libro l ON p.libroId = l.id
+             JOIN usuario u ON p.usuarioId = u.id
+             WHERE p.usuarioId = ?
+             ORDER BY p.fechaPrestamo DESC`,
+            [req.user.id]
+        );
+
+        res.json(prestamos);
+    } catch (err) {
+        console.error('Error al obtener historial de préstamos:', err);
+        res.status(400).json({ error: err.message });
+    }
+};
+
+// Obtener todos los préstamos (Admin)
+const obtenerTodosPrestamos = async (req, res) => {
+    try {
+        const [prestamos] = await pool.query(
+            `SELECT p.id, p.fechaPrestamo, p.fechaDevolucion, p.estado as estado_prestamo,
+                    l.titulo as libro_titulo, l.portada as libro_Portada,
+                     l.autor as libro_autor, u.nombre as usuario_nombre
+             FROM prestamo p
+             JOIN libro l ON p.libroId = l.id
+             JOIN usuario u ON p.usuarioId = u.id
+             ORDER BY p.fechaPrestamo DESC`
+        );
+
+        res.json(prestamos);
+    } catch (err) {
+        console.error('Error al obtener todos los préstamos:', err);
+        res.status(400).json({ error: err.message });
+    }
+};
+
+// Extender la fecha de devolución de un préstamo
+const extenderPrestamo = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Verificar que el préstamo existe y pertenece al usuario
+        const [prestamo] = await pool.query(
+            'SELECT * FROM prestamo WHERE id = ? AND usuarioId = ? AND fechaDevolucionReal IS NULL',
+            [id, req.user.id]
+        );
+
+        if (prestamo.length === 0) {
+            return res.status(404).json({ error: 'Préstamo no encontrado o ya devuelto' });
+        }
+
+        // Extender la fecha de devolución por 7 días desde la fecha actual
+        const nuevaFechaDevolucion = new Date();
+        nuevaFechaDevolucion.setDate(nuevaFechaDevolucion.getDate() + 7);
+
+        // Actualizar la fecha de devolución
+        await pool.query(
+            'UPDATE prestamo SET fechaDevolucion = ? WHERE id = ?',
+            [nuevaFechaDevolucion, id]
+        );
+
+        res.json({
+            message: 'Fecha de devolución extendida exitosamente',
+            nueva_fecha_devolucion: nuevaFechaDevolucion
         });
-    } catch (error) {
-        res.status(400).json({
-            success: false,
-            message: 'Error al registrar la devolución',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error al extender préstamo:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
 module.exports = {
     crearPrestamo,
-    registrarDevolucion,
-    obtenerPrestamosUsuario,
+    devolverLibro,
+    obtenerPrestamosActivos,
+    obtenerHistorialPrestamos,
+    obtenerTodosPrestamos,
     extenderPrestamo
 };

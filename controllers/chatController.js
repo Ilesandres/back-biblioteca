@@ -1,6 +1,5 @@
 const { Chat, Mensaje, Usuario } = require('../models');
 const { enviarNotificacion, enviarNotificacionAdmin } = require('../config/socket');
-const { Op } = require('sequelize');
 const { cloudinary } = require('../config/cloudinary');
 
 // ¡Iniciar una nueva conversación de soporte!

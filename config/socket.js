@@ -1,6 +1,6 @@
 const socketIO = require('socket.io');
 const jwt = require('jsonwebtoken');
-const { Chat, Mensaje, Usuario, Notificacion } = require('../models');
+const db = require('./db');
 
 let io = null;
 
@@ -48,104 +48,49 @@ const initializeSocket = (server) => {
                     const mensaje = await guardarMensajeChat(data);
                     io.to(data.chatId).emit('nuevo_mensaje', mensaje);
                 } catch (error) {
-                    socket.emit('error_chat', { message: error.message });
+                    console.error('Error al guardar mensaje:', error);
+                    socket.emit('error_chat', { message: 'Error al enviar mensaje' });
                 }
             });
 
-            // Manejar desconexión
             socket.on('disconnect', () => {
-                socket.leave(`user:${socket.userId}`);
-            });
-
-            // Manejar marcado de mensajes como leídos
-            socket.on('marcar_leido', async (data) => {
-                try {
-                    const { chatId } = data;
-                    const chat = await Chat.findByPk(chatId);
-                    
-                    if (chat) {
-                        io.to(`chat:${chatId}`).emit('mensajes_leidos', {
-                            chatId,
-                            usuarioId: socket.userId
-                        });
-                    }
-                } catch (error) {
-                    socket.emit('error_chat', { message: error.message });
-                }
+                console.log(`Usuario ${socket.userId} desconectado`);
             });
         });
     }
     return io;
 };
 
-const enviarNotificacion = async (userId, notificacion) => {
+// Función para guardar mensaje en la base de datos
+async function guardarMensajeChat(data) {
+    const { chatId, contenido, usuarioId } = data;
+    const [result] = await db.query(
+        'INSERT INTO mensaje (chatId, contenido, usuarioId) VALUES (?, ?, ?)',
+        [chatId, contenido, usuarioId]
+    );
+    
+    const [mensaje] = await db.query(
+        'SELECT m.*, u.nombre as nombreUsuario FROM mensaje m JOIN usuario u ON m.usuarioId = u.id WHERE m.id = ?',
+        [result.insertId]
+    );
+    
+    return mensaje[0];
+}
+
+// Función para enviar notificaciones pendientes
+async function enviarNotificacionesPendientes(userId) {
     try {
-        // Guardar la notificación en la base de datos
-        const nuevaNotificacion = await Notificacion.create({
-            usuarioId: userId,
-            mensaje: notificacion.mensaje,
-            tipo: notificacion.tipo,
-            leida: false
-        });
-
-        if (!io) {
-            console.error('Socket.io no está inicializado');
-            return nuevaNotificacion;
-        }
-
-        io.to(`user:${userId}`).emit('nueva_notificacion', nuevaNotificacion);
-
-        return nuevaNotificacion;
-    } catch (error) {
-        console.error('Error al enviar notificación:', error);
-        throw error;
-    }
-};
-
-const enviarNotificacionesPendientes = async (userId) => {
-    try {
-        const notificacionesPendientes = await Notificacion.findAll({
-            where: {
-                usuarioId: userId,
-                leida: false
-            }
-        });
-
-        if (notificacionesPendientes.length > 0 && io) {
-            notificacionesPendientes.forEach(notificacion => {
-                io.to(`user:${userId}`).emit('nueva_notificacion', notificacion);
-            });
+        const [notificaciones] = await db.query(
+            'SELECT * FROM notificacion WHERE usuarioId = ? AND leida = false',
+            [userId]
+        );
+        
+        if (notificaciones.length > 0) {
+            io.to(`user:${userId}`).emit('notificaciones_pendientes', notificaciones);
         }
     } catch (error) {
         console.error('Error al enviar notificaciones pendientes:', error);
     }
-};
+}
 
-const enviarNotificacionAdmin = (notificacion) => {
-    if (io) {
-        io.to('admin').emit('notificacion_admin', notificacion);
-    }
-};
-
-const guardarMensajeChat = async (data) => {
-    const { chatId, contenido, usuarioId } = data;
-    
-    const mensaje = await Mensaje.create({
-        chatId,
-        usuarioId,
-        contenido
-    });
-
-    await Chat.update(
-        { ultimoMensaje: new Date() },
-        { where: { id: chatId } }
-    );
-
-    return mensaje;
-};
-
-module.exports = {
-    initializeSocket,
-    enviarNotificacion,
-    enviarNotificacionAdmin
-};
+module.exports = { initializeSocket };

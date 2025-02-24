@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const Usuario = require('../models/Usuario');
+const db = require('../config/db');
 
 const protegerRuta = async (req, res, next) => {
     try {
@@ -15,7 +15,9 @@ const protegerRuta = async (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         
         // Verificar que el usuario existe y está activo
-        const usuario = await Usuario.findByPk(decoded.id);
+        const [users] = await db.query('SELECT * FROM usuario WHERE id = ?', [decoded.id]);
+        const usuario = users[0];
+
         if (!usuario) {
             return res.status(401).json({ 
                 success: false,
@@ -23,7 +25,7 @@ const protegerRuta = async (req, res, next) => {
             });
         }
 
-        req.user = usuario.toJSON();
+        req.user = usuario;
         next();
     } catch (error) {
         if (error.name === 'TokenExpiredError') {

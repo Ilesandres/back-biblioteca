@@ -1,11 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
-const Usuario = require('../models/Usuario');
-const Contact = require('../models/Contact');
 const { protegerRuta } = require('../middlewares/auth');
 const { validarRegistro } = require('../middlewares/validator');
 const jwt = require('jsonwebtoken');
-const { Op } = require('sequelize');
+const pool = require('../config/db');
 const {
     registrarUsuario,
     loginUsuario,
@@ -15,7 +13,7 @@ const {
     getStats
 } = require('../controllers/usuarioController');
 
-const router=express.Router();
+const router = express.Router();
 
 /**
  * @swagger
@@ -57,7 +55,7 @@ router.get('/stats', protegerRuta, getStats);
  *           schema:
  *             type: object
  *             properties:
- *               username:
+ *               nombre:
  *                 type: string
  *                 example: "johndoe"
  *               email:

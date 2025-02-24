@@ -1,229 +1,219 @@
-const { Usuario, Prestamo, Resena } = require('../models');
-const { Op } = require('sequelize');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const pool = require('../config/db');
 
-// Registrar usuario
+// Registrar un nuevo usuario
 const registrarUsuario = async (req, res) => {
     try {
-        const { email } = req.body;
-        const usuarioExistente = await Usuario.findOne({ where: { email } });
+        const { nombre, email, password } = req.body;
 
-        if (usuarioExistente) {
-            return res.status(400).json({
-                success: false,
-                message: '¡Este email ya está registrado!'
-            });
+        // Generar hash de la contraseña
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        // Verificar si el email ya existe
+        const [existingUser] = await pool.query('SELECT id FROM usuario WHERE email = ?', [email]);
+        if (existingUser.length > 0) {
+            return res.status(400).json({ error: 'El email ya está registrado' });
         }
 
-        const usuario = await Usuario.create({
-            nombre: req.body.nombre,
-            email: req.body.email,
-            password: req.body.password,
-            rol: req.body.rol || 'usuario'
-        });
-        
+        // Insertar nuevo usuario con rol por defecto (usuario)
+        const [result] = await pool.query(
+            'INSERT INTO usuario (nombre, email, password, rol) VALUES (?, ?, ?, ?)',
+            [nombre, email, hashedPassword, 'usuario']
+        );
+
+        // Generar token JWT
         const token = jwt.sign(
-            { id: usuario.id },
+            { id: result.insertId, email, rol: 'usuario' },
             process.env.JWT_SECRET,
-            { expiresIn: '1d' }
+            { expiresIn: '24h' }
         );
 
         res.status(201).json({
-            success: true,
-            token,
-            data: {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                email: usuario.email,
-                rol: usuario.rol
-            }
+            user: {
+                id: result.insertId,
+                nombre,
+                email,
+                rol: 'usuario'
+            },
+            token
         });
-    } catch (error) {
-        res.status(400).json({
-            success: false,
-            message: 'Error al registrar usuario',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error al registrar usuario:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
-// Login usuario
+// Login de usuario
 const loginUsuario = async (req, res) => {
     try {
         const { email, password } = req.body;
-        const usuario = await Usuario.findOne({
-            where: { email },
-            attributes: ['id', 'nombre', 'email', 'password', 'rol']
-        });
 
-        if (!usuario) {
-            return res.status(401).json({
-                success: false,
-                message: 'Credenciales inválidas'
-            });
+        // Validate input
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email y contraseña son requeridos' });
         }
 
-        const passwordValido = await bcrypt.compare(password, usuario.password);
-        if (!passwordValido) {
-            return res.status(401).json({
-                success: false,
-                message: 'Credenciales inválidas'
-            });
+        // Buscar usuario por email (case-insensitive)
+        const [users] = await pool.query('SELECT * FROM usuario WHERE LOWER(email) = LOWER(?)', [email]);
+
+        if (users.length === 0) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
+        const user = users[0];
+        user.password= user.PASSWORD;
+
+        // Verify if password exists in database
+        if (!user.password) {
+            return res.status(401).json({ error: 'Error en la autenticación' });
+        }
+
+        // Verificar contraseña
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+
+        // Actualizar estado online del usuario
+        await pool.query('UPDATE usuario SET online = TRUE, lastSeen = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+
+        // Generar token JWT
         const token = jwt.sign(
-            { id: usuario.id },
+            { id: user.id, email: user.email, rol: user.rol },
             process.env.JWT_SECRET,
-            { expiresIn: '1d' }
+            { expiresIn: '24h' }
         );
 
         res.json({
-            success: true,
-            token,
             user: {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                email: usuario.email,
-                rol: usuario.rol
-            }
+                id: user.id,
+                username: user.nombre,
+                email: user.email,
+                rol: user.rol
+            },
+            token
         });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al iniciar sesión',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error en login:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
 // Obtener perfil de usuario
 const obtenerPerfil = async (req, res) => {
     try {
-        const usuario = await Usuario.findByPk(req.user.id, {
-            attributes: { exclude: ['password'] },
-            include: [
-                {
-                    model: Prestamo,
-                    include: ['Libro']
-                },
-                {
-                    model: Resena,
-                    include: ['Libro']
-                }
-            ]
-        });
+        const [users] = await pool.query(
+            'SELECT id, nombre, email FROM usuario WHERE id = ?',
+            [req.user.id]
+        );
 
-        res.json({
-            success: true,
-            data: usuario
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al obtener perfil',
-            error: error.message
-        });
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        res.json(users[0]);
+    } catch (err) {
+        console.error('Error al obtener perfil:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
-// Actualizar perfil del usuario
+// Actualizar perfil de usuario
 const actualizarPerfil = async (req, res) => {
     try {
-        const usuario = await Usuario.findByPk(req.user.id);
-        
-        if (!usuario) {
-            return res.status(404).json({
-                success: false,
-                message: 'Usuario no encontrado'
-            });
+        const { nombre, email, password } = req.body;
+        const userId = req.user.id;
+
+        // Si se proporciona una nueva contraseña, hashearla
+        let hashedPassword;
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            hashedPassword = await bcrypt.hash(password, salt);
         }
-        
-        // No permitir actualizar el rol desde esta ruta
-        delete req.body.rol;
-        
-        await usuario.update(req.body);
+
+        // Construir query dinámicamente basado en los campos proporcionados
+        let updateFields = [];
+        let queryParams = [];
+
+        if (nombre) {
+            updateFields.push('nombre = ?');
+            queryParams.push(nombre);
+        }
+        if (email) {
+            updateFields.push('email = ?');
+            queryParams.push(email);
+        }
+        if (hashedPassword) {
+            updateFields.push('password = ?');
+            queryParams.push(hashedPassword);
+        }
+
+        queryParams.push(userId);
+
+        const query = `UPDATE usuario SET ${updateFields.join(', ')} WHERE id = ?`;
+        await pool.query(query, queryParams);
+
+        // Obtener usuario actualizado
+        const [updatedUser] = await pool.query(
+            'SELECT id, nombre, email FROM usuario WHERE id = ?',
+            [userId]
+        );
 
         res.json({
             success: true,
             message: '¡Perfil actualizado exitosamente!',
-            data: {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                email: usuario.email
-            }
+            data: updatedUser[0]
         });
-    } catch (error) {
-        res.status(400).json({
-            success: false,
-            message: 'Error al actualizar perfil',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error al actualizar perfil:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
-// Obtener historial de préstamos del usuario
+// Obtener historial de préstamos
 const obtenerHistorialPrestamos = async (req, res) => {
     try {
-        const prestamos = await Prestamo.findAll({
-            where: { usuarioId: req.usuario.id },
-            include: [{
-                model: Libro,
-                attributes: ['titulo', 'autor', 'portada']
-            }],
-            order: [['fechaPrestamo', 'DESC']]
-        });
+        const [prestamos] = await pool.query(
+            `SELECT p.id, p.libroId, p.fechaPrestamo, 
+                    p.fechaDevolucion, l.titulo as tituloLibro
+             FROM prestamo p
+             JOIN libro l ON p.libroId = l.id
+             WHERE p.usuarioId = ?
+             ORDER BY p.fechaPrestamo DESC`,
+            [req.user.id]
+        );
 
-        res.json({
-            success: true,
-            data: prestamos
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al obtener historial',
-            error: error.message
-        });
+        res.json(prestamos);
+    } catch (err) {
+        console.error('Error al obtener historial de préstamos:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
 // Obtener estadísticas del usuario
 const getStats = async (req, res) => {
     try {
-        const userId = req.user.id;
+        // Obtener número total de préstamos
+        const [prestamosTotal] = await pool.query(
+            'SELECT COUNT(*) as total FROM prestamo WHERE usuarioId = ?',
+            [req.user.id]
+        );
 
-        // Obtener cantidad de préstamos
-        const prestamosCount = await Prestamo.count({
-            where: { usuarioId: userId }
-        });
-
-        // Obtener cantidad de reseñas
-        const resenasCount = await Resena.count({
-            where: { usuarioId: userId }
-        });
-
-        // Obtener préstamos activos
-        const prestamosActivos = await Prestamo.count({
-            where: {
-                usuarioId: userId,
-                estado: 'activo'
-            }
-        });
+        // Obtener número de libros actualmente prestados
+        const [librosActivos] = await pool.query(
+            'SELECT COUNT(*) as activos FROM prestamo WHERE usuarioId = ? AND fechaDevolucion IS NULL',
+            [req.user.id]
+        );
 
         res.json({
-            success: true,
-            data: {
-                totalPrestamos: prestamosCount,
-                totalResenas: resenasCount,
-                prestamosActivos: prestamosActivos
-            }
+            prestamos: prestamosTotal[0].total,
+            librosActivos: librosActivos[0].activos
         });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error al obtener estadísticas',
-            error: error.message
-        });
+    } catch (err) {
+        console.error('Error al obtener estadísticas:', err);
+        res.status(400).json({ error: err.message });
     }
 };
 
