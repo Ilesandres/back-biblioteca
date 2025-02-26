@@ -5,8 +5,12 @@ const { cloudinary, BOOK_COVERS_FOLDER } = require('../config/cloudinary');
 const libroController = {
     buscarLibros: async (req, res) => {
         try {
-            const { query } = req.query;
-            const searchQuery = `
+            const { search, genero, disponible, page = 1, limit = 12 } = req.query;
+            let conditions = [];
+            let params = [];
+
+            // Base query
+            let searchQuery = `
                 SELECT l.*, 
                     GROUP_CONCAT(c.nombre) as categorias,
                     CASE WHEN l.stock > 0 THEN TRUE ELSE FALSE END as disponible,
@@ -14,24 +18,51 @@ const libroController = {
                 FROM libro l
                 LEFT JOIN librocategoria lc ON l.id = lc.libroId
                 LEFT JOIN categoria c ON lc.categoriaId = c.id
-                WHERE l.titulo LIKE ? OR l.autor LIKE ?
-                GROUP BY l.id
             `;
-            const searchTerm = `%${query}%`;
-            const [libros] = await db.query(searchQuery, [searchTerm, searchTerm]);
+
+            // Add search condition
+            if (search) {
+                conditions.push('(l.titulo LIKE ? OR l.autor LIKE ? OR l.descripcion LIKE ?)');
+                const searchTerm = `%${search}%`;
+                params.push(searchTerm, searchTerm, searchTerm);
+            }
+
+            // Add genre condition
+            if (genero) {
+                conditions.push('c.nombre = ?');
+                params.push(genero);
+            }
+
+            // Add availability condition
+            if (disponible === 'true') {
+                conditions.push('l.stock > 0');
+            } else if (disponible === 'false') {
+                conditions.push('l.stock = 0');
+            }
+
+            // Add WHERE clause if there are conditions
+            if (conditions.length > 0) {
+                searchQuery += ' WHERE ' + conditions.join(' AND ');
+            }
+
+            // Add GROUP BY and pagination
+            searchQuery += ' GROUP BY l.id';
+            searchQuery += ' ORDER BY l.createdAt DESC';
+            searchQuery += ' LIMIT ? OFFSET ?';
+
+            // Calculate offset
+            const offset = (page - 1) * limit;
+            params.push(parseInt(limit), offset);
+
+            const [libros] = await db.query(searchQuery, params);
             res.json(libros);
         } catch (error) {
             console.error('Error al buscar libros:', error);
-            res.status(500).send('Error al buscar libros');
+            res.status(500).json({ error: 'Error al buscar libros' });
         }
     },
     
     updateLibro: async (req, res) => {
-        console.log('Iniciando actualización de libro');
-        console.log('Headers:', req.headers);
-        console.log('Body:', req.body);
-        console.log('File:', req.file);
-
         let connection;
         try {
             if (!req.body || Object.keys(req.body).length === 0) {
@@ -224,10 +255,6 @@ const libroController = {
     },
 
     crearLibro: async (req, res) => {
-        console.log('Request body:', req.body);
-        console.log('File object:', req.file);
-        console.log('Headers:', req.headers);
-        console.log('Content-Type:', req.headers['content-type']);
         
         if (!req.file) {
             return res.status(400).json({
@@ -326,20 +353,23 @@ const libroController = {
     },
 
     eliminarLibro: async (req, res) => {
+        let connection;
         try {
             const { id } = req.params;
 
-            // First get the book to check if it exists and get the cover URL
-            const [libro] = await db.query('SELECT * FROM libro WHERE id = ?', [id]);
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            const [libro] = await connection.query('SELECT * FROM libro WHERE id = ?', [id]);
             
             if (libro.length === 0) {
+                await connection.rollback();
                 return res.status(404).json({
                     success: false,
                     message: 'Libro no encontrado'
                 });
             }
 
-            // If the book has a cover image in Cloudinary, delete it
             if (libro[0].portada && libro[0].portada.includes('cloudinary.com')) {
                 const publicId = `${BOOK_COVERS_FOLDER}/${libro[0].portada.split('/').pop().split('.')[0]}`;
                 try {
@@ -350,8 +380,15 @@ const libroController = {
                 }
             }
 
-            // Delete the book from the database
-            await db.query('DELETE FROM libro WHERE id = ?', [id]);
+            await connection.query('DELETE FROM librocategoria WHERE libroId = ?', [id]);
+
+            await connection.query('DELETE FROM prestamo WHERE libroId =?', [id]);
+
+            await connection.query('DELETE FROM resena WHERE libroId =?', [id])
+
+            await connection.query('DELETE FROM libro WHERE id = ?', [id]);
+
+            await connection.commit();
 
             res.json({
                 success: true,

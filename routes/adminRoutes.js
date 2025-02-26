@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { protegerRuta } = require('../middlewares/auth');
 const { esAdmin } = require('../middlewares/roles');
 const { 
@@ -14,6 +15,14 @@ const {
 } = require('../controllers/adminController');
 const { getLibros } = require('../controllers/libroController');
 const dataService = require('../services/dataService');
+
+// Configuración de multer para manejar la subida de archivos
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024 // 5MB limit
+    }
+});
 
 // Ruta para obtener estadísticas generales
 router.get('/stats', protegerRuta, esAdmin, obtenerEstadisticas);
@@ -35,7 +44,7 @@ router.delete('/usuarios/:usuario_id', protegerRuta, esAdmin, eliminarUsuario);
 
 // Rutas para importación/exportación de datos
 router.post('/export', protegerRuta, esAdmin, exportData);
-router.post('/import', protegerRuta, esAdmin, importData);
+router.post('/import', protegerRuta, esAdmin, upload.single('file'), importData);
 
 // Ruta para generar plantillas
 router.get('/template', protegerRuta, esAdmin, generateTemplate);

@@ -88,20 +88,35 @@ class DataService {
     // Import data with transaction support
     async importData(data, entities) {
         const connection = await pool.getConnection();
+        console.log("entities: ", entities);
+        console.log("data: ", data);
+        data.categories = data.categorías;
+        console.log('entities data : ', data.libros)
+        console.log('importando');
         try {
             await connection.beginTransaction();
 
-            if (entities.includes('books') && data.books) {
-                // Import categories first
-                if (data.categories) {
-                    for (const category of data.categories) {
-                        await connection.query(
-                            'INSERT IGNORE INTO categoria (id, nombre) VALUES (?, ?)',
-                            [category.id, category.nombre]
-                        );
-                    }
+            if (entities.includes('categories') && data.categories) {
+                for (const category of data.categories) {
+                    await connection.query(
+                        'INSERT IGNORE INTO  categoria (id, nombre) VALUES (?, ?)',
+                        [ category.id, category.Nombre]
+                    );
                 }
+            }
 
+            if (entities.includes('bookCategories') && data.bookCategories) {
+                // Import book-category relationships
+                for (const relation of data.bookCategories) {
+                    await connection.query(
+                        'INSERT IGNORE INTO librocategoria (libroId, categoriaId) VALUES (?, ?)',
+                        [relation.libroId, relation.categoriaId]
+                    );
+                }
+            }
+
+            if (entities.includes('books') && data.libros) {
+                console.log('books: ', data.libros)
                 // Import books
                 for (const book of data.books) {
                     await connection.query(

@@ -286,11 +286,11 @@ const exportData = async (req, res) => {
 const importData = async (req, res) => {
     try {
         // Validate file upload
-        if (!req.files || !req.files.file) {
+        if (!req.file) {
             return res.status(400).json({ error: 'No se ha proporcionado ningún archivo' });
         }
 
-        const file = req.files.file;
+        const file = req.file;
         
         // Validate and parse entities
         let entities = [];
@@ -310,27 +310,15 @@ const importData = async (req, res) => {
         }
 
         let data;
-        const fileType = file.name.split('.').pop().toLowerCase();
+        const fileType = file.originalname.split('.').pop().toLowerCase();
 
         if (fileType === 'xlsx' || fileType === 'xls') {
             const ExcelJS = require('exceljs');
             const workbook = new ExcelJS.Workbook();
 
-            // Validate file size and content
-            if (!file.data || file.data.length === 0) {
-                return res.status(400).json({ error: 'El archivo está vacío o corrupto' });
-            }
-
             try {
-                // Create a proper buffer from file data
-                const buffer = Buffer.from(file.data.buffer || file.data);
-                
-                // Validate buffer integrity
-                if (!buffer || buffer.length === 0) {
-                    return res.status(400).json({ error: 'Error al procesar el archivo' });
-                }
-
-                await workbook.xlsx.load(buffer);
+                // Load the buffer directly from multer's file buffer
+                await workbook.xlsx.load(file.buffer);
 
                 data = {};
                 workbook.eachSheet((worksheet, sheetId) => {
@@ -369,7 +357,7 @@ const importData = async (req, res) => {
                 });
             }
         } else if (fileType === 'json') {
-            data = JSON.parse(file.data.toString());
+            data = JSON.parse(file.buffer.toString());
         } else {
             return res.status(400).json({ error: 'Formato de archivo no soportado. Use XLSX o JSON.' });
         }
