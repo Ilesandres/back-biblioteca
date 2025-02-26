@@ -18,7 +18,7 @@ const obtenerUsuarios = async (req, res) => {
 const obtenerEstadisticas = async (req, res) => {
     try {
         // Total de usuarios
-        const [usuarios] = await pool.query('SELECT COUNT(*) as total FROM usuario');
+        const [usuarios] = await pool.query('SELECT COUNT(*) as total FROM usuario WHERE online=1');
         
         // Total de libros
         const [libros] = await pool.query('SELECT COUNT(*) as total FROM libro');

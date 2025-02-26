@@ -217,11 +217,28 @@ const getStats = async (req, res) => {
     }
 };
 
+// Cerrar sesión de usuario
+const logoutUsuario = async (req, res) => {
+    try {
+        // Actualizar estado online y lastSeen del usuario
+        await pool.query(
+            'UPDATE usuario SET online = FALSE, lastSeen = CURRENT_TIMESTAMP WHERE id = ?',
+            [req.user.id]
+        );
+
+        res.json({ message: 'Sesión cerrada exitosamente' });
+    } catch (err) {
+        console.error('Error al cerrar sesión:', err);
+        res.status(500).json({ error: 'Error al cerrar sesión' });
+    }
+};
+
 module.exports = {
     registrarUsuario,
     loginUsuario,
     obtenerPerfil,
     actualizarPerfil,
     obtenerHistorialPrestamos,
-    getStats
+    getStats,
+    logoutUsuario
 };

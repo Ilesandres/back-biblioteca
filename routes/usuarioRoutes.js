@@ -10,7 +10,8 @@ const {
     obtenerPerfil,
     actualizarPerfil,
     obtenerHistorialPrestamos,
-    getStats
+    getStats,
+    logoutUsuario
 } = require('../controllers/usuarioController');
 
 const router = express.Router();
@@ -403,5 +404,21 @@ router.get('/search', protegerRuta, async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
+
+/**
+ * @swagger
+ * /usuarios/logout:
+ *   post:
+ *     summary: Cierra la sesión del usuario
+ *     tags: [Usuarios]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Sesión cerrada exitosamente
+ *       500:
+ *         description: Error al cerrar sesión
+ */
+router.post('/logout', protegerRuta, logoutUsuario);
 
 module.exports = router;
