@@ -25,22 +25,62 @@ const libroController = {
             res.status(500).send('Error al buscar libros');
         }
     },
+    
     updateLibro: async (req, res) => {
-        console.log("Actualizando libro - Datos recibidos:", {
-            body: req.body,
-            file: req.file ? 'File present' : 'No file'
-        });
+        console.log('Iniciando actualización de libro');
+        console.log('Headers:', req.headers);
+        console.log('Body:', req.body);
+        console.log('File:', req.file);
 
+        let connection;
         try {
-            const { titulo, autor, isbn, descripcion, genero, anioPublicacion, copias, stock } = req.body;
+            if (!req.body || Object.keys(req.body).length === 0) {
+                console.log('Error: No se recibieron datos en el body o está vacío');
+                return res.status(400).json({
+                    success: false,
+                    message: 'No se proporcionaron datos para actualizar'
+                });
+            }
+
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            const { titulo, autor, isbn, descripcion, genero, anioPublicacion, copias, editorial } = req.body;
+            console.log('Datos extraídos del body:', { titulo, autor, isbn, descripcion, genero, anioPublicacion, copias, editorial });
+
+            const fechaPublicacion = anioPublicacion;
             const idLibro = req.params.id;
             const fecha_Act = moment().tz('America/Bogota').format('YYYY-MM-DD HH:mm:ss');
             let categorias = genero;
 
+            // Input validation with detailed error message
+            const requiredFields = { titulo, autor, isbn, descripcion, fechaPublicacion, copias, editorial };
+            const missingFields = Object.entries(requiredFields)
+                .filter(([_, value]) => !value)
+                .map(([field]) => field);
+
+            if (missingFields.length > 0) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: `Los siguientes campos son requeridos: ${missingFields.join(', ')}`
+                });
+            }
+
+            // Input validation
+            if (!titulo || !autor || !isbn || !descripcion || !fechaPublicacion || !copias || !editorial) {
+                await connection.rollback();
+                return res.status(400).json({
+                    success: false,
+                    message: 'Todos los campos son requeridos'
+                });
+            }
+
             // Verify book existence
-            const [existingBooks] = await db.query('SELECT * FROM libro WHERE id = ?', [idLibro]);
+            const [existingBooks] = await connection.query('SELECT * FROM libro WHERE id = ?', [idLibro]);
             
             if (!existingBooks || existingBooks.length === 0) {
+                await connection.rollback();
                 return res.status(404).json({
                     success: false,
                     message: 'Libro no encontrado'
@@ -53,7 +93,6 @@ const libroController = {
             // Handle image upload if new image is provided
             if (req.file) {
                 try {
-                    // Delete old cover if exists
                     if (existingBook.portada && existingBook.portada.includes('cloudinary.com')) {
                         const publicId = `${BOOK_COVERS_FOLDER}/${existingBook.portada.split('/').pop().split('.')[0]}`;
                         try {
@@ -62,14 +101,11 @@ const libroController = {
                             console.error('Error deleting old image:', deleteError);
                         }
                     }
-
-                    // Upload new cover with folder specification
-                    const result = await cloudinary.uploader.upload(req.file.path, {
-                        folder: BOOK_COVERS_FOLDER
-                    });
-                    portadaUrl = result.secure_url;
-                } catch (cloudinaryError) {
-                    console.error('Error handling image:', cloudinaryError);
+                    // The image is already uploaded to Cloudinary by the uploadBookCover middleware
+                    portadaUrl = req.file.path;
+                } catch (error) {
+                    await connection.rollback();
+                    console.error('Error handling image:', error);
                     return res.status(500).json({
                         success: false,
                         message: 'Error al procesar la imagen'
@@ -77,74 +113,68 @@ const libroController = {
                 }
             }
 
-            // Begin transaction
-            await db.query('START TRANSACTION');
+            // Update libro information
+            const updateLibroQuery = 'UPDATE libro SET titulo = ?, autor = ?, stock = ?, isbn = ?, anioPublicacion = ?, descripcion = ?, updatedAt = ?, portada = ?, editorial = ? WHERE id = ?';
+            const [updateResult] = await connection.query(updateLibroQuery, [
+                titulo,
+                autor,
+                copias,
+                isbn,
+                fechaPublicacion,
+                descripcion,
+                fecha_Act,
+                portadaUrl,
+                editorial,
+                idLibro
+            ]);
 
-            try {
-                // Update libro information
-                const updateLibroQuery = 'UPDATE libro SET titulo = ?, autor = ?, stock = ?, isbn = ?, anioPublicacion = ?, descripcion = ?, updatedAt = ?, portada = ? WHERE id = ?';
-                const [updateResult] = await db.query(updateLibroQuery, [
-                    titulo,
-                    autor,
-                    copias || stock, // Use copias if available, fallback to stock
-                    isbn,
-                    anioPublicacion,
-                    descripcion,
-                    fecha_Act,
-                    portadaUrl,
-                    idLibro
-                ]);
-
-                if (updateResult.affectedRows === 0) {
-                    throw new Error('No se pudo actualizar el libro');
-                }
-
-                // Update categories
-                await db.query('DELETE FROM librocategoria WHERE libroId = ?', [idLibro]);
-
-                if (categorias) {
-                    // Ensure categorias is an array
-                    const categoriasArray = Array.isArray(categorias) ? categorias : [categorias];
-                    
-                    if (categoriasArray.length > 0) {
-                        const insertCategoriaQuery = 'INSERT INTO librocategoria (libroId, categoriaId) VALUES ?';
-                        const categoriaValues = categoriasArray.map(categoriaId => [idLibro, categoriaId]);
-                        await db.query(insertCategoriaQuery, [categoriaValues]);
-                    }
-                }
-
-                // Commit transaction
-                await db.query('COMMIT');
-
-                // Get updated book data
-                const [updatedBook] = await db.query(`
-                    SELECT l.*, GROUP_CONCAT(c.nombre) as categorias
-                    FROM libro l
-                    LEFT JOIN librocategoria lc ON l.id = lc.libroId
-                    LEFT JOIN categoria c ON lc.categoriaId = c.id
-                    WHERE l.id = ?
-                    GROUP BY l.id
-                `, [idLibro]);
-
-                res.status(200).json({
-                    success: true,
-                    message: 'Libro actualizado con éxito',
-                    data: updatedBook[0]
-                });
-
-            } catch (transactionError) {
-                // Rollback on error
-                await db.query('ROLLBACK');
-                throw transactionError;
+            if (updateResult.affectedRows === 0) {
+                throw new Error('No se pudo actualizar el libro');
             }
 
+            // Update categories if provided
+            if (categorias) {
+                const categoriasArray = Array.isArray(categorias) ? categorias : categorias.split(',');
+                
+                if (categoriasArray.length > 0) {
+                    await connection.query('DELETE FROM librocategoria WHERE libroId = ?', [idLibro]);
+                    const categoriaValues = categoriasArray.map(categoriaId => [idLibro, categoriaId]);
+                    await connection.query('INSERT INTO librocategoria (libroId, categoriaId) VALUES ?', [categoriaValues]);
+                }
+            }
+
+            await connection.commit();
+
+            // Get updated book data
+            const [updatedBook] = await connection.query(`
+                SELECT l.*, GROUP_CONCAT(c.nombre) as categorias
+                FROM libro l
+                LEFT JOIN librocategoria lc ON l.id = lc.libroId
+                LEFT JOIN categoria c ON lc.categoriaId = c.id
+                WHERE l.id = ?
+                GROUP BY l.id
+            `, [idLibro]);
+
+            res.status(200).json({
+                success: true,
+                message: 'Libro actualizado con éxito',
+                data: updatedBook[0]
+            });
+
         } catch (error) {
+            if (connection) {
+                await connection.rollback();
+            }
             console.error('Error en la operación del libro:', error);
             res.status(500).json({
                 success: false,
                 message: 'Error al procesar la operación del libro',
                 error: error.message
             });
+        } finally {
+            if (connection) {
+                connection.release();
+            }
         }
     },
 
@@ -194,46 +224,83 @@ const libroController = {
     },
 
     crearLibro: async (req, res) => {
+        console.log('Request body:', req.body);
+        console.log('File object:', req.file);
+        console.log('Headers:', req.headers);
+        console.log('Content-Type:', req.headers['content-type']);
+        
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No se proporcionó la imagen de portada'
+            });
+        }
+
+        let connection;
         try {
-            const { titulo, autor, isbn, descripcion, genero, fechaPublicacion, copias } = req.body;
+            const { titulo, autor, isbn, descripcion, genero, anioPublicacion, copias, editorial } = req.body;
+            const fechaPublicacion = anioPublicacion;
             let categorias = genero;
-            let portadaUrl = null;
+
+            // Input validation
+            if (!titulo || !autor || !isbn || !descripcion || !fechaPublicacion || !copias || !editorial) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Todos los campos son requeridos'
+                });
+            }
 
             // Ensure categorias is an array
             if (categorias && !Array.isArray(categorias)) {
                 categorias = [categorias];
             }
 
-            // Get the Cloudinary URL from multer middleware
-            portadaUrl = req.file ? req.file.path : null;
+            // Get connection and start transaction
+            connection = await db.getConnection();
+            await connection.beginTransaction();
+
+            // Handle image upload
+            let portadaUrl = null;
+            if (req.file) {
+                // The file should already be uploaded to Cloudinary by uploadBookCover middleware
+                if (!req.file.path) {
+                    throw new Error('Error al procesar la imagen: URL no disponible');
+                }
+                portadaUrl = req.file.path;
+                console.log('Imagen subida a Cloudinary:', portadaUrl);
+            }
 
             // Insert new book
             const insertLibroQuery = `
-                INSERT INTO libro (titulo, autor, stock, isbn, anioPublicacion, descripcion, portada, createdAt, updatedAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                INSERT INTO libro (titulo, autor, stock, isbn, anioPublicacion, descripcion, portada, editorial, createdAt, updatedAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
             `;
 
-            const [result] = await db.query(insertLibroQuery, [
+            const [result] = await connection.query(insertLibroQuery, [
                 titulo,
                 autor,
                 copias,
                 isbn,
                 fechaPublicacion,
                 descripcion,
-                portadaUrl
+                portadaUrl,
+                editorial
             ]);
 
             // Insert book categories if provided
             if (categorias && categorias.length > 0) {
                 const insertCategoriaQuery = `INSERT INTO librocategoria (libroId, categoriaId) VALUES (?, ?)`;
                 const insertPromises = categorias.map(categoriaId => 
-                    db.query(insertCategoriaQuery, [result.insertId, categoriaId])
+                    connection.query(insertCategoriaQuery, [result.insertId, categoriaId])
                 );
                 await Promise.all(insertPromises);
             }
 
+            // Commit transaction
+            await connection.commit();
+
             // Get the created book with categories
-            const [newBook] = await db.query(`
+            const [newBook] = await connection.query(`
                 SELECT l.*, GROUP_CONCAT(c.nombre) as categorias
                 FROM libro l
                 LEFT JOIN librocategoria lc ON l.id = lc.libroId
@@ -333,9 +400,8 @@ const libroController = {
                 }
             }
 
-            // Upload new cover image
-            const result = await cloudinary.uploader.upload(req.file.path);
-            const portadaUrl = result.secure_url;
+            // The image is already uploaded by the uploadBookCover middleware
+            const portadaUrl = req.file.path;
 
             // Update the book cover URL in the database
             await db.query('UPDATE libro SET portada = ?, updatedAt = NOW() WHERE id = ?', [portadaUrl, id]);

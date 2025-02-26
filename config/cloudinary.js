@@ -42,11 +42,36 @@ const uploadBookCover = multer({
     storage: bookCoverStorage,
     limits: {
         fileSize: 5 * 1024 * 1024 // 5MB límite
+    },
+    fileFilter: (req, file, cb) => {
+        console.log('Processing file upload:', file);
+        console.log('Request headers:', req.headers);
+
+        if (!file) {
+            console.log('No file detected in request');
+            return cb(new Error('No se ha proporcionado ningún archivo'), false);
+        }
+        
+        // Check file mimetype
+        if (!file.mimetype.startsWith('image/')) {
+            console.log('Invalid mimetype:', file.mimetype);
+            return cb(new Error('Solo se permiten archivos de imagen'), false);
+        }
+        
+        const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+        if (allowedMimes.includes(file.mimetype)) {
+            console.log('File accepted:', file.originalname);
+            cb(null, true);
+        } else {
+            console.log('File rejected - invalid type:', file.mimetype);
+            cb(new Error('Tipo de archivo inválido. Solo se permiten JPG, PNG y WebP'), false);
+        }
     }
 });
 
 module.exports = {
     cloudinary,
     uploadChatFile,
-    uploadBookCover
+    uploadBookCover,
+    BOOK_COVERS_FOLDER
 };

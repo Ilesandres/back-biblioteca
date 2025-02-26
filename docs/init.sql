@@ -117,7 +117,46 @@ CREATE TABLE IF NOT EXISTS notificaciones (
     FOREIGN KEY (usuarioId) REFERENCES usuario(id) ON DELETE CASCADE
 );
 
--- Create Indexes
+-- Create Support Chat Tables
+CREATE TABLE IF NOT EXISTS support_agent (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    usuarioId INT NOT NULL,
+    estado ENUM('disponible', 'ocupado', 'offline') DEFAULT 'offline',
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (usuarioId) REFERENCES usuario(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    usuarioId INT NOT NULL,
+    agenteId INT,
+    asunto VARCHAR(255) NOT NULL,
+    estado ENUM('pendiente', 'en_proceso', 'resuelto', 'cerrado') DEFAULT 'pendiente',
+    prioridad ENUM('baja', 'media', 'alta') DEFAULT 'media',
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (usuarioId) REFERENCES usuario(id) ON DELETE CASCADE,
+    FOREIGN KEY (agenteId) REFERENCES support_agent(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS support_message (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    ticketId INT NOT NULL,
+    emisorId INT NOT NULL,
+    tipo ENUM('usuario', 'agente') NOT NULL,
+    mensaje TEXT NOT NULL,
+    leido BOOLEAN DEFAULT FALSE,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticketId) REFERENCES support_ticket(id) ON DELETE CASCADE,
+    FOREIGN KEY (emisorId) REFERENCES usuario(id) ON DELETE CASCADE
+);
+
+-- Create Indexes for Support Chat
+CREATE INDEX idx_support_ticket_estado ON support_ticket(estado);
+CREATE INDEX idx_support_ticket_prioridad ON support_ticket(prioridad);
+CREATE INDEX idx_support_message_ticket ON support_message(ticketId);
+CREATE INDEX idx_support_agent_estado ON support_agent(estado);
 CREATE INDEX idx_libro_titulo ON libro(titulo);
 CREATE INDEX idx_libro_autor ON libro(autor);
 CREATE INDEX idx_libro_isbn ON libro(isbn);
