@@ -106,7 +106,7 @@ const toggleBloqueoUsuario = async (req, res) => {
         const { bloqueado } = req.body;
 
         await pool.query(
-            'UPDATE usuario SET bloqueado = ? WHERE id = ?',
+            'UPDATE usuario SET online = ? WHERE id = ?',
             [bloqueado, usuario_id]
         );
 

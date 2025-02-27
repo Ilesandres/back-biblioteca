@@ -103,9 +103,10 @@ const loginUsuario = async (req, res) => {
 
 // Obtener perfil de usuario
 const obtenerPerfil = async (req, res) => {
+    console.log('respos')
     try {
         const [users] = await pool.query(
-            'SELECT id, nombre, email FROM usuario WHERE id = ?',
+            'SELECT id, nombre, createdAt, email FROM usuario WHERE id = ?',
             [req.user.id]
         );
 
@@ -200,6 +201,11 @@ const getStats = async (req, res) => {
             'SELECT COUNT(*) as total FROM prestamo WHERE usuarioId = ?',
             [req.user.id]
         );
+        
+        const [reseñasTotal] = await pool.query(
+            'SELECT COUNT(*) as total FROM resena WHERE usuarioId =?',
+            [req.user.id]
+        );
 
         // Obtener número de libros actualmente prestados
         const [librosActivos] = await pool.query(
@@ -209,7 +215,8 @@ const getStats = async (req, res) => {
 
         res.json({
             prestamos: prestamosTotal[0].total,
-            librosActivos: librosActivos[0].activos
+            prestamosActivos: librosActivos[0].activos,
+            reseñas: reseñasTotal[0].total
         });
     } catch (err) {
         console.error('Error al obtener estadísticas:', err);

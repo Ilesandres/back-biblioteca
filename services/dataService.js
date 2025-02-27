@@ -36,7 +36,7 @@ class DataService {
 
         // If 'all' is selected, export everything
         if (entities.includes('all')) {
-            entities = ['books', 'users', 'loans', 'reviews'];
+            entities = ['books', 'users', 'loans', 'reviews','categories','bookCategories'];
         }
 
         if (entities.includes('books')) {
@@ -82,6 +82,11 @@ class DataService {
             exportData.reviews = reviews;
         }
 
+        if (entities.includes('categories')){
+            const [categories] = await pool.query('SELECT * FROM categoria');
+            exportData.categories = categories;
+        }
+
         return exportData;
     }
 
@@ -118,11 +123,28 @@ class DataService {
             if (entities.includes('books') && data.libros) {
                 console.log('books: ', data.libros)
                 // Import books
-                for (const book of data.books) {
-                    await connection.query(
-                        'INSERT IGNORE INTO libro (id, titulo, autor, editorial, imagen, descripcion) VALUES (?, ?, ?, ?, ?, ?)',
-                        [book.id, book.titulo, book.autor, book.editorial, book.imagen, book.descripcion]
+                for (const book of data.libros) {
+                     const response1=await connection.query(
+                        'INSERT IGNORE INTO libro (id, titulo, autor, isbn, editorial, anioPublicacion, descripcion, stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [book.id, book['Título'], book['Autor'], book['ISBN'], book['Editorial'], book['Año de Publicación'], book['Descripción'], book['Stock']]
                     );
+                    const idInsert=response1[0].insertId;
+                    console.log( 'insert ID ', idInsert);
+                    console.log('categories: ', book['Categorías']);
+                    if(Array.isArray(book['Categorías'])){
+                        for (const category of book['Categorías']){
+                            await connection.query(
+                                'INSERT IGNORE INTO librocategoria (libroId, categoriaId) VALUES (?,?)',
+                                [idInsert, category]
+                            );
+
+                        }
+                    }else{
+                        await connection.query(
+                            'INSERT IGNORE INTO librocategoria (libroId, categoriaId) VALUES (?,?)',
+                            [idInsert, book['Categorías']]
+                        );
+                    }
                 }
 
                 // Import reviews if selected
